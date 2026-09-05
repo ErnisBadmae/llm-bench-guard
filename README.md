@@ -1,0 +1,125 @@
+# llm-bench-guard
+
+A latency/throughput benchmark for local OpenAI-compatible LLM endpoints that **refuses to
+report a number it believes is misleading**.
+
+Measuring a local model is easy. Measuring it in a way that survives someone asking "are you
+sure?" is not. Every guard in this package exists because the corresponding mistake was made on
+a running system, produced a plausible number, and was wrong.
+
+## The problem, in one run
+
+Here is the same model, on the same host, measured twice. The only difference is one request
+parameter:
+
+```console
+$ llm-bench-guard compare --baseline artifacts/thinking_on.json \
+                          --candidate artifacts/thinking_off.json
+{
+  "latency_p50_delta_pct": -85.5,
+  "latency_p95_delta_pct": -0.3,
+  "throughput_delta_pct": -1.3
+}
+  [BLOCKING] reasoning_mode: one run was measured with reasoning enabled and the other
+  without. The difference between them is the mode, not the model.
+
+These numbers are not reportable. Fix the blocking conditions and measure again.
+```
+
+An 85% latency drop is the kind of result that ends up in a slide. But p95 did not move and
+throughput went slightly *down* — nothing got faster. One run let the model think before
+answering and the other did not, and no HTTP status code anywhere tells you that happened.
+
+The tool exits non-zero, so a comparison like this fails a CI step instead of becoming a claim.
+
+## What it guards against
+
+| Guard | What it catches | Severity |
+|---|---|---|
+| `contention` | The endpoint was serving something else. One prompt's slowest repeat is several times its fastest — models do not vary like that, queues do. | blocking |
+| `reasoning_mode` | The model was thinking when you believed it was not, or the two runs you are comparing were in different modes. Detected with a control question whose correct answer is a few tokens. | warn / blocking on compare |
+| `thread_parity` | A CPU comparison where each side got a different thread budget. Runtimes do not share a thread setting, so this measures your configuration and calls it the backend. | blocking |
+| `served_model` | The endpoint ignored the model name you sent and served whatever it had loaded, so your config alias describes a different build than the one measured. | warn |
+| `quality_pairing` | Emitted on every comparison: speed alone is not a decision. A candidate that is faster and worse is not a win. | warn |
+
+`contention` and `thread_parity` are blocking because they make the number wrong.
+`served_model` is a warning because the run is still valid — you just have to record what was
+actually measured.
+
+## Install
+
+```bash
+pip install llm-bench-guard
+```
+
+## Use
+
+```bash
+# measure
+llm-bench-guard run \
+  --base-url http://127.0.0.1:8000/v1 \
+  --model my-model \
+  --repeats 5 --threads 8 \
+  --out artifacts/baseline.json
+
+# measure a candidate, then compare
+llm-bench-guard compare --baseline artifacts/baseline.json \
+                        --candidate artifacts/candidate.json
+```
+
+Anything the server accepts can be passed through, which is how you control reasoning mode:
+
+```bash
+llm-bench-guard run ... --extra-body '{"chat_template_kwargs": {"enable_thinking": false}}'
+```
+
+As a library:
+
+```python
+from llm_bench_guard import Endpoint, run_benchmark
+
+artifact = run_benchmark(Endpoint(base_url="http://127.0.0.1:8000/v1", model="my-model"))
+assert artifact["guards"]["reportable"]
+```
+
+## What it measures
+
+Three prompt shapes, because one average hides the thing you care about:
+
+- **short_qa** — a few tokens out, dominated by per-request overhead. This is where a faster
+  runtime actually shows up.
+- **json_extraction** — structured output of moderate length; the shape most services run.
+- **long_explanation** — bounded by `max_tokens`. This one measures your output limit as much
+  as the model, which is why p95 often barely moves between runtimes while p50 halves.
+
+Reported: latency p50/p95 across all calls, mean decode throughput, and per-prompt means with
+the spread used by the contention guard. A warm-up call is discarded — the first call after
+load pays for page-ins and is never representative.
+
+## What it does not do
+
+- **No quality measurement.** This is the performance half. Pair it with your own gate; the
+  comparison output says so every time.
+- **No host-side metrics.** VRAM and RAM live on the inference host, not in an HTTP response.
+  Record them next to the artifact by hand.
+- **No throughput-under-load benchmark.** Concurrency is deliberately absent: this measures a
+  quiet endpoint, and treats a busy one as an error rather than a data point.
+- **It cannot turn reasoning off for you.** How to disable thinking is server- and
+  template-specific. The guard tells you which mode you measured; you pass the right parameter.
+
+## Notes from the field
+
+**Proxies answer for private addresses.** `trust_env` is off by default. An ambient
+`HTTPS_PROXY` will intercept a request to `192.168.x.x`, answer it itself, and the failure
+arrives as an authentication error that looks like it came from the model server. Pass
+`--trust-env` if you actually need the proxy.
+
+**Aliases drift.** Some servers load one model at startup and ignore the `model` field
+entirely. The artifact records the served name separately from the requested one, because a
+month later that difference is the only thing standing between you and a wrong conclusion.
+
+**The first call is a lie.** Discarded. So is any run where the endpoint was busy.
+
+## License
+
+MIT

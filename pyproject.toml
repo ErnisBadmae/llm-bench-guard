@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-bench-guard"
+version = "0.1.0"
+description = "Latency/throughput benchmark for local OpenAI-compatible LLM endpoints that refuses to report a misleading number."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Ernis Badmaev" }]
+keywords = [
+    "llm",
+    "benchmark",
+    "inference",
+    "latency",
+    "throughput",
+    "llama-cpp",
+    "vllm",
+    "local-inference",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["httpx>=0.27"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+llm-bench-guard = "llm_bench_guard.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/badmaev-es/llm-bench-guard"
+Issues = "https://github.com/badmaev-es/llm-bench-guard/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
