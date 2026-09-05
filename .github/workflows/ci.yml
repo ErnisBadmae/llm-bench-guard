@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Tests
+        run: pytest -q
+
+      # The guards must keep their exit codes: a blocking finding has to fail a pipeline,
+      # otherwise the whole point of the package is lost. This checks the contract without
+      # needing a model server.
+      - name: Guard contract — a blocked comparison exits non-zero
+        run: |
+          python - <<'PY'
+          import json, pathlib, subprocess, sys
+
+          def artifact(path, **over):
+              base = {
+                  "requested_model": "m", "served_model": "m", "threads": 8,
+                  "reasoning_observed": False,
+                  "guards": {"reportable": True, "findings": []},
+                  "overall": {"latency_ms_p50": 800.0, "latency_ms_p95": 8000.0,
+                              "tokens_per_s_mean": 45.0},
+              }
+              base.update(over)
+              pathlib.Path(path).write_text(json.dumps(base), encoding="utf-8")
+
+          def compare_exit(baseline, candidate):
+              cmd = [sys.executable, "-m", "llm_bench_guard.cli", "compare",
+                     "--baseline", baseline, "--candidate", candidate]
+              return subprocess.run(cmd, capture_output=True).returncode
+
+          artifact("a.json")
+          artifact("b.json", reasoning_observed=True)
+          artifact("c.json")
+
+          blocked = compare_exit("a.json", "b.json")
+          assert blocked == 1, f"a blocked comparison must exit 1, got {blocked}"
+
+          clean = compare_exit("a.json", "c.json")
+          assert clean == 0, f"a clean comparison must exit 0, got {clean}"
+          print("guard exit-code contract holds")
+          PY
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build distribution
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*

@@ -38,8 +38,9 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 llm-bench-guard = "llm_bench_guard.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/badmaev-es/llm-bench-guard"
-Issues = "https://github.com/badmaev-es/llm-bench-guard/issues"
+Homepage = "https://github.com/ErnisBadmae/llm-bench-guard"
+Repository = "https://github.com/ErnisBadmae/llm-bench-guard"
+Issues = "https://github.com/ErnisBadmae/llm-bench-guard/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
