@@ -134,10 +134,17 @@ The difference is not academic. On a llama.cpp server started with a single slot
 
 Per-request throughput collapses by 4x while the aggregate does not move at all. The obvious
 way to get a system number from per-request ones — multiply the mean by the concurrency —
-gives 44.9, 56.0, 69.9, 85.5 t/s here: a clean rising curve, and wrong. Each per-request
-figure already has that request's queue wait in its denominator, so scaling it by the number
-of waiters counts the waiting as work. Total tokens over elapsed wall time cannot be inflated
-that way, which is why `system_tokens_per_s` is measured and not derived.
+gives 44.9, 56.0, 69.9, 85.5 t/s here: a clean rising curve, and wrong. Rates can only be
+added when they hold over the same interval, and these do not: each was measured over its
+own request, and on a serialised server those requests run one after another.
+
+Two requests arriving together, 100 tokens each, one second of server work each. The first
+is answered in 1 s (100 t/s), the second in 2 s because it waited (50 t/s). Averaging and
+scaling gives 75 x 2 = 150 t/s. The server actually produced 200 tokens in 2 s, which is 100.
+
+Hence `system_tokens_per_s`: total completion tokens over the elapsed time of the measured
+phase. Both quantities have to be recorded during the run; neither can be recovered from a
+mean per-request rate and a client count.
 
 A flat aggregate does not by itself prove serialisation — a saturated resource under genuine
 parallelism looks the same. It is a hypothesis the numbers make cheap to test, and here
