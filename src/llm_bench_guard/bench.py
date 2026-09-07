@@ -1,4 +1,10 @@
-"""The measurement itself: latency percentiles and decode throughput over a fixed prompt set."""
+"""The measurement itself: latency percentiles and decode throughput over a fixed prompt set.
+
+Two throughput numbers live here and they answer different questions. Per-request
+``tokens_per_s`` is what one caller experiences, queue wait included. ``system_tokens_per_s``
+is what the server as a whole delivers, measured against the wall clock. Only the second one
+answers "how much can this box take"; see the comment where it is computed.
+"""
 
 from __future__ import annotations
 
@@ -147,6 +153,9 @@ def _one_streaming_call(
         "latency_ms": elapsed_ms,
         "ttft_ms": ttft_ms,
         "completion_tokens": completion_tokens,
+        # Per request, and therefore inclusive of any time this request spent queueing.
+        # Under concurrency it drops even when the server is doing exactly as much work as
+        # before. Do not read capacity off it — see system_tokens_per_s in run_benchmark.
         "tokens_per_s": (completion_tokens / elapsed_ms * 1000.0) if elapsed_ms else 0.0,
         "reasoning_chars": reasoning_chars,
         "content": "".join(content),
@@ -193,6 +202,12 @@ def run_benchmark(
         all_latencies: list[float] = []
         all_throughputs: list[float] = []
         all_ttft: list[float] = []
+        # Wall clock for the whole measured phase. This exists because averaging the
+        # per-request throughputs instead produced a rising curve — 42.8, 57.9, 70.6 t/s at
+        # concurrency 1, 2, 4 — on a server that was strictly serialising and doing the same
+        # total work throughout. The queue wait sits in each per-request figure, and averaging
+        # figures that each contain it moves the average in a direction the system never went.
+        # Total tokens over elapsed wall time cannot be fooled that way.
         total_completion_tokens = 0
         measured_started = time.perf_counter()
 
