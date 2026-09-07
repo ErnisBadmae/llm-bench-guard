@@ -132,10 +132,16 @@ The difference is not academic. On a llama.cpp server started with a single slot
 | 4 | 17.5 | 49.5 | 72.1 s | 1601 ms |
 | 8 | 10.7 | 49.9 | 143.1 s | 3599 ms |
 
-Per-request throughput collapses by 4x and the aggregate does not move at all: every client
-after the first is queueing. Averaging the per-request figures instead suggests aggregate
-throughput *rising* with concurrency — that average has the queue wait baked into it, and
-reading capacity off it is wrong. Hence the wall clock.
+Per-request throughput collapses by 4x while the aggregate does not move at all. The obvious
+way to get a system number from per-request ones — multiply the mean by the concurrency —
+gives 44.9, 56.0, 69.9, 85.5 t/s here: a clean rising curve, and wrong. Each per-request
+figure already has that request's queue wait in its denominator, so scaling it by the number
+of waiters counts the waiting as work. Total tokens over elapsed wall time cannot be inflated
+that way, which is why `system_tokens_per_s` is measured and not derived.
+
+A flat aggregate does not by itself prove serialisation — a saturated resource under genuine
+parallelism looks the same. It is a hypothesis the numbers make cheap to test, and here
+`/props` reporting a single slot confirmed it.
 
 A number from a quiet endpoint does not tell you how the service behaves when several people
 use it, and that is usually the number someone is about to put in a slide.
@@ -155,7 +161,7 @@ the window was measured to be unused, not because splitting is free:
 
 Three things this table says that a single average would hide. Throughput only moves at four
 concurrent requests — at two the gain is 3% and the entire benefit is latency. The ceiling is
-the same at four and eight, because there are four slots and the ninth request queues again.
+the same at four and eight, because there are four slots and the fifth request queues again.
 And per-request throughput *fell* while the server did more total work, which is the cost
 batching charges an individual request, not a regression.
 
