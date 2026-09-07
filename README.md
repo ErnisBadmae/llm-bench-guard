@@ -140,6 +140,28 @@ reading capacity off it is wrong. Hence the wall clock.
 A number from a quiet endpoint does not tell you how the service behaves when several people
 use it, and that is usually the number someone is about to put in a slide.
 
+### What the aggregate number is for
+
+The same server, restarted with four slots and continuous batching, with nothing else changed.
+The context window was split four ways to pay for it — that trade was safe here only because
+the window was measured to be unused, not because splitting is free:
+
+| concurrency | system t/s, 1 slot | system t/s, 4 slots | TTFT p95, 1 slot | TTFT p95, 4 slots |
+|---|---|---|---|---|
+| 1 | 48.5 | 50.5 | 391 ms | 90 ms |
+| 2 | 49.5 | 51.2 | 8.1 s | 0.86 s |
+| 4 | 49.5 | **78.8** | 23.9 s | **1.12 s** |
+| 8 | 49.9 | 79.4 | 55.6 s | 20.5 s |
+
+Three things this table says that a single average would hide. Throughput only moves at four
+concurrent requests — at two the gain is 3% and the entire benefit is latency. The ceiling is
+the same at four and eight, because there are four slots and the ninth request queues again.
+And per-request throughput *fell* while the server did more total work, which is the cost
+batching charges an individual request, not a regression.
+
+Acceptance was re-measured on the promoted server rather than carried over from the candidate:
++55.7% aggregate and −94.5% TTFT p95, within noise of the numbers above.
+
 ## What it does not do
 
 - **No quality measurement.** This is the performance half. Pair it with your own gate; the
