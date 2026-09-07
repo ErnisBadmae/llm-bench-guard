@@ -193,11 +193,14 @@ def run_benchmark(
         all_latencies: list[float] = []
         all_throughputs: list[float] = []
         all_ttft: list[float] = []
+        total_completion_tokens = 0
+        measured_started = time.perf_counter()
 
         for prompt in prompts:
             latencies: list[float] = []
             throughputs: list[float] = []
             tokens: list[int] = []
+            ttfts: list[float] = []
             if concurrency == 1:
                 results = [
                     _one_streaming_call(client, endpoint.model, prompt, extra_body)
@@ -223,6 +226,7 @@ def run_benchmark(
                 throughputs.append(measured["tokens_per_s"])
                 tokens.append(measured["completion_tokens"])
                 if measured["ttft_ms"] is not None:
+                    ttfts.append(measured["ttft_ms"])
                     all_ttft.append(measured["ttft_ms"])
             spread = (max(latencies) / min(latencies)) if min(latencies) else 0.0
             per_prompt.append(
@@ -233,10 +237,14 @@ def run_benchmark(
                     "latency_spread_max_min": round(spread, 2),
                     "tokens_per_s_mean": round(statistics.fmean(throughputs), 2),
                     "completion_tokens_mean": round(statistics.fmean(tokens), 1),
+                    "ttft_ms_mean": round(statistics.fmean(ttfts), 1) if ttfts else None,
                 }
             )
             all_latencies.extend(latencies)
             all_throughputs.extend(throughputs)
+            total_completion_tokens += sum(tokens)
+
+        measured_wall_ms = (time.perf_counter() - measured_started) * 1000.0
 
     if concurrency == 1:
         # Under deliberate load the spread IS the measurement, so the guard would fire on
@@ -262,6 +270,10 @@ def run_benchmark(
             "tokens_per_s_mean": round(statistics.fmean(all_throughputs), 2),
             "ttft_ms_p50": round(_percentile(all_ttft, 0.50), 1) if all_ttft else None,
             "ttft_ms_p95": round(_percentile(all_ttft, 0.95), 1) if all_ttft else None,
+            "system_tokens_per_s": round(total_completion_tokens / measured_wall_ms * 1000.0, 2)
+            if measured_wall_ms
+            else 0.0,
+            "wall_ms": round(measured_wall_ms, 1),
         },
         "per_prompt": per_prompt,
         "guards": report.as_dict(),

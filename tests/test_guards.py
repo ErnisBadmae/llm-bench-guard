@@ -64,6 +64,7 @@ def _artifact(**over):
             "latency_ms_p50": 800.0,
             "latency_ms_p95": 8000.0,
             "tokens_per_s_mean": 45.0,
+            "system_tokens_per_s": 45.0,
         },
     }
     base.update(over)
@@ -123,3 +124,23 @@ def test_ttft_delta_is_reported_when_both_sides_have_it():
     cand = _artifact(concurrency=1)
     cand["overall"]["ttft_ms_p50"] = 60.0
     assert compare(base, cand)["ttft_p50_delta_pct"] == 50.0
+
+
+def test_system_throughput_delta_separates_per_request_from_aggregate():
+    """Under load a request gets slower while the server as a whole may still do more work.
+
+    Reporting only the per-request number calls that a regression; it is the queue.
+    """
+    quiet = _artifact(concurrency=4)
+    loaded = _artifact(
+        concurrency=4,
+        overall={
+            "latency_ms_p50": 3200.0,
+            "latency_ms_p95": 32000.0,
+            "tokens_per_s_mean": 18.0,
+            "system_tokens_per_s": 72.0,
+        },
+    )
+    result = compare(quiet, loaded)
+    assert result["throughput_delta_pct"] == -60.0
+    assert result["system_throughput_delta_pct"] == 60.0

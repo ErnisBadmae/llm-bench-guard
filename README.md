@@ -113,6 +113,28 @@ contamination. The contention guard steps aside above concurrency 1, because oth
 fire on exactly what you asked for. Comparisons across different concurrency levels are refused
 outright.
 
+Under load, two throughput numbers say different things and only one of them answers the
+capacity question:
+
+- `tokens_per_s_mean` is **per request**, and it includes the time that request spent waiting.
+  It falls as concurrency rises even on a server that is doing exactly as much work as before.
+- `system_tokens_per_s` is **aggregate**: all completion tokens divided by the wall clock of the
+  measured phase. This is the one that tells you whether extra concurrency buys anything.
+
+The difference is not academic. On a llama.cpp server started with a single slot:
+
+| concurrency | per-request t/s | system t/s | wall | TTFT p50 |
+|---|---|---|---|---|
+| 1 | 44.9 | 48.5 | 18.4 s | 111 ms |
+| 2 | 28.0 | 49.5 | 36.0 s | 590 ms |
+| 4 | 17.5 | 49.5 | 72.1 s | 1601 ms |
+| 8 | 10.7 | 49.9 | 143.1 s | 3599 ms |
+
+Per-request throughput collapses by 4x and the aggregate does not move at all: every client
+after the first is queueing. Averaging the per-request figures instead suggests aggregate
+throughput *rising* with concurrency — that average has the queue wait baked into it, and
+reading capacity off it is wrong. Hence the wall clock.
+
 A number from a quiet endpoint does not tell you how the service behaves when several people
 use it, and that is usually the number someone is about to put in a slide.
 

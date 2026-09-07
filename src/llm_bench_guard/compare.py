@@ -57,6 +57,9 @@ def compare(baseline: dict, candidate: dict) -> dict:
         "latency_p50_delta_pct": _pct_delta(b.get("latency_ms_p50"), c.get("latency_ms_p50")),
         "latency_p95_delta_pct": _pct_delta(b.get("latency_ms_p95"), c.get("latency_ms_p95")),
         "throughput_delta_pct": _pct_delta(b.get("tokens_per_s_mean"), c.get("tokens_per_s_mean")),
+        "system_throughput_delta_pct": _pct_delta(
+            b.get("system_tokens_per_s"), c.get("system_tokens_per_s")
+        ),
         "ttft_p50_delta_pct": _pct_delta(b.get("ttft_ms_p50"), c.get("ttft_ms_p50")),
         "ttft_p95_delta_pct": _pct_delta(b.get("ttft_ms_p95"), c.get("ttft_ms_p95")),
         "guards": report.as_dict(),
