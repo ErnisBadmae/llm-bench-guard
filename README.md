@@ -50,8 +50,10 @@ actually measured.
 ## Install
 
 ```bash
-pip install llm-bench-guard
+pip install git+https://github.com/ErnisBadmae/llm-bench-guard
 ```
+
+Not on PyPI yet.
 
 ## Use
 
