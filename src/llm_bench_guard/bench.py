@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import statistics
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -64,7 +66,7 @@ def served_model_name(client: httpx.Client) -> str | None:
         return None
 
 
-def _one_call(client: httpx.Client, model: str, prompt: Prompt, extra: dict | None) -> dict:
+def _request_body(model: str, prompt: Prompt, extra: dict | None) -> dict[str, Any]:
     body: dict[str, Any] = {
         "model": model,
         "messages": prompt["messages"],
@@ -73,8 +75,13 @@ def _one_call(client: httpx.Client, model: str, prompt: Prompt, extra: dict | No
     }
     if extra:
         body.update(extra)
+    return body
+
+
+def _one_call(client: httpx.Client, model: str, prompt: Prompt, extra: dict | None) -> dict:
+    """One non-streaming call. Total latency only — no time-to-first-token."""
     started = time.perf_counter()
-    response = client.post("/chat/completions", json=body)
+    response = client.post("/chat/completions", json=_request_body(model, prompt, extra))
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     response.raise_for_status()
     payload = response.json()
@@ -82,10 +89,67 @@ def _one_call(client: httpx.Client, model: str, prompt: Prompt, extra: dict | No
     completion_tokens = int((payload.get("usage") or {}).get("completion_tokens") or 0)
     return {
         "latency_ms": elapsed_ms,
+        "ttft_ms": None,
         "completion_tokens": completion_tokens,
         "tokens_per_s": (completion_tokens / elapsed_ms * 1000.0) if elapsed_ms else 0.0,
         "reasoning_chars": len(message.get("reasoning_content") or ""),
         "content": message.get("content") or "",
+    }
+
+
+def _one_streaming_call(
+    client: httpx.Client, model: str, prompt: Prompt, extra: dict | None
+) -> dict:
+    """One streaming call, so that time-to-first-token is measurable.
+
+    TTFT and total latency answer different questions: TTFT is what the user feels before
+    anything appears, total latency is bounded by ``max_tokens`` and therefore says as much
+    about your output limit as about the model. Reporting only one of them hides that.
+    """
+    body = _request_body(model, prompt, extra)
+    body["stream"] = True
+    body["stream_options"] = {"include_usage": True}
+
+    started = time.perf_counter()
+    ttft_ms: float | None = None
+    completion_tokens = 0
+    chunks = 0
+    reasoning_chars = 0
+    content: list[str] = []
+
+    with client.stream("POST", "/chat/completions", json=body) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line.startswith("data:"):
+                continue
+            payload_text = line[5:].strip()
+            if not payload_text or payload_text == "[DONE]":
+                continue
+            payload = json.loads(payload_text)
+            usage = payload.get("usage")
+            if usage and usage.get("completion_tokens"):
+                completion_tokens = int(usage["completion_tokens"])
+            for choice in payload.get("choices") or []:
+                delta = choice.get("delta") or {}
+                piece = delta.get("content") or ""
+                reasoning_chars += len(delta.get("reasoning_content") or "")
+                if piece or delta.get("reasoning_content"):
+                    if ttft_ms is None:
+                        ttft_ms = (time.perf_counter() - started) * 1000.0
+                    chunks += 1
+                content.append(piece)
+
+    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    if not completion_tokens:
+        # The server did not report usage for the stream; chunks are the honest fallback.
+        completion_tokens = chunks
+    return {
+        "latency_ms": elapsed_ms,
+        "ttft_ms": ttft_ms,
+        "completion_tokens": completion_tokens,
+        "tokens_per_s": (completion_tokens / elapsed_ms * 1000.0) if elapsed_ms else 0.0,
+        "reasoning_chars": reasoning_chars,
+        "content": "".join(content),
     }
 
 
@@ -95,6 +159,7 @@ def run_benchmark(
     repeats: int = 5,
     prompts: list[Prompt] | None = None,
     threads: int | None = None,
+    concurrency: int = 1,
     extra_body: dict | None = None,
     label: str | None = None,
 ) -> dict:
@@ -102,6 +167,10 @@ def run_benchmark(
 
     ``threads`` is not used by the measurement — it is recorded so that a later CPU comparison
     can refuse to compare runs made with different budgets.
+
+    ``concurrency`` above 1 issues that many requests at once. Latency then includes queueing,
+    which is the point: a number measured on a quiet endpoint does not tell you how the service
+    behaves when several people use it. Total work is ``repeats * concurrency`` per prompt.
     """
     prompts = prompts or DEFAULT_PROMPTS
     report = GuardReport()
@@ -123,16 +192,38 @@ def run_benchmark(
         per_prompt: list[dict] = []
         all_latencies: list[float] = []
         all_throughputs: list[float] = []
+        all_ttft: list[float] = []
 
         for prompt in prompts:
             latencies: list[float] = []
             throughputs: list[float] = []
             tokens: list[int] = []
-            for _ in range(repeats):
-                measured = _one_call(client, endpoint.model, prompt, extra_body)
+            if concurrency == 1:
+                results = [
+                    _one_streaming_call(client, endpoint.model, prompt, extra_body)
+                    for _ in range(repeats)
+                ]
+            else:
+                # Requests are issued together on purpose: this measures the endpoint under
+                # load, so queueing here is the signal, not contamination.
+                with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                    futures = [
+                        pool.submit(
+                            _one_streaming_call,
+                            client,
+                            endpoint.model,
+                            prompt,
+                            extra_body,
+                        )
+                        for _ in range(repeats * concurrency)
+                    ]
+                    results = [f.result() for f in futures]
+            for measured in results:
                 latencies.append(measured["latency_ms"])
                 throughputs.append(measured["tokens_per_s"])
                 tokens.append(measured["completion_tokens"])
+                if measured["ttft_ms"] is not None:
+                    all_ttft.append(measured["ttft_ms"])
             spread = (max(latencies) / min(latencies)) if min(latencies) else 0.0
             per_prompt.append(
                 {
@@ -147,9 +238,12 @@ def run_benchmark(
             all_latencies.extend(latencies)
             all_throughputs.extend(throughputs)
 
-    finding = check_contention(per_prompt)
-    if finding:
-        report.findings.append(finding)
+    if concurrency == 1:
+        # Under deliberate load the spread IS the measurement, so the guard would fire on
+        # exactly the thing we asked for. It only guards the quiet case.
+        finding = check_contention(per_prompt)
+        if finding:
+            report.findings.append(finding)
 
     return {
         "schema": "llm-bench-guard/1",
@@ -159,12 +253,15 @@ def run_benchmark(
         "served_model": served,
         "repeats": repeats,
         "threads": threads,
+        "concurrency": concurrency,
         "reasoning_observed": control["reasoning_chars"] > 0,
         "control_completion_tokens": control["completion_tokens"],
         "overall": {
             "latency_ms_p50": round(_percentile(all_latencies, 0.50), 1),
             "latency_ms_p95": round(_percentile(all_latencies, 0.95), 1),
             "tokens_per_s_mean": round(statistics.fmean(all_throughputs), 2),
+            "ttft_ms_p50": round(_percentile(all_ttft, 0.50), 1) if all_ttft else None,
+            "ttft_ms_p95": round(_percentile(all_ttft, 0.95), 1) if all_ttft else None,
         },
         "per_prompt": per_prompt,
         "guards": report.as_dict(),

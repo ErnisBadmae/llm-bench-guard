@@ -35,6 +35,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         endpoint,
         repeats=args.repeats,
         threads=args.threads,
+        concurrency=args.concurrency,
         extra_body=extra,
         label=args.label,
     )
@@ -75,6 +76,13 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=None,
         help="CPU thread budget given to the runtime; recorded so comparisons can check parity",
+    )
+    run.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="how many requests to issue at once; above 1 the latency includes queueing, "
+        "which is the point of measuring under load",
     )
     run.add_argument(
         "--extra-body",

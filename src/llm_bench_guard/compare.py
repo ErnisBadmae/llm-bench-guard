@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .guards import GuardReport, check_thread_parity, quality_pairing_note
+from .guards import GuardReport, check_load_parity, check_thread_parity, quality_pairing_note
 
 
 def _pct_delta(baseline: float | None, candidate: float | None) -> float | None:
@@ -35,6 +35,10 @@ def compare(baseline: dict, candidate: dict) -> dict:
     if finding:
         report.findings.append(finding)
 
+    finding = check_load_parity(baseline, candidate)
+    if finding:
+        report.findings.append(finding)
+
     if bool(baseline.get("reasoning_observed")) != bool(candidate.get("reasoning_observed")):
         report.add(
             "reasoning_mode",
@@ -53,5 +57,7 @@ def compare(baseline: dict, candidate: dict) -> dict:
         "latency_p50_delta_pct": _pct_delta(b.get("latency_ms_p50"), c.get("latency_ms_p50")),
         "latency_p95_delta_pct": _pct_delta(b.get("latency_ms_p95"), c.get("latency_ms_p95")),
         "throughput_delta_pct": _pct_delta(b.get("tokens_per_s_mean"), c.get("tokens_per_s_mean")),
+        "ttft_p50_delta_pct": _pct_delta(b.get("ttft_ms_p50"), c.get("ttft_ms_p50")),
+        "ttft_p95_delta_pct": _pct_delta(b.get("ttft_ms_p95"), c.get("ttft_ms_p95")),
         "guards": report.as_dict(),
     }

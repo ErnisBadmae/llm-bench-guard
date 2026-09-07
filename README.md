@@ -40,6 +40,7 @@ The tool exits non-zero, so a comparison like this fails a CI step instead of be
 | `reasoning_mode` | The model was thinking when you believed it was not, or the two runs you are comparing were in different modes. Detected with a control question whose correct answer is a few tokens. | warn / blocking on compare |
 | `thread_parity` | A CPU comparison where each side got a different thread budget. Runtimes do not share a thread setting, so this measures your configuration and calls it the backend. | blocking |
 | `served_model` | The endpoint ignored the model name you sent and served whatever it had loaded, so your config alias describes a different build than the one measured. | warn |
+| `load_parity` | A quiet run compared against a loaded one. Latency under concurrency includes queueing, so the difference is the setup, not the model. | blocking |
 | `quality_pairing` | Emitted on every comparison: speed alone is not a decision. A candidate that is faster and worse is not a win. | warn |
 
 `contention` and `thread_parity` are blocking because they make the number wrong.
@@ -92,9 +93,28 @@ Three prompt shapes, because one average hides the thing you care about:
 - **long_explanation** — bounded by `max_tokens`. This one measures your output limit as much
   as the model, which is why p95 often barely moves between runtimes while p50 halves.
 
-Reported: latency p50/p95 across all calls, mean decode throughput, and per-prompt means with
-the spread used by the contention guard. A warm-up call is discarded — the first call after
-load pays for page-ins and is never representative.
+Reported: **time to first token** (p50/p95), latency p50/p95 across all calls, mean decode
+throughput, and per-prompt means with the spread used by the contention guard. A warm-up call
+is discarded — the first call after load pays for page-ins and is never representative.
+
+TTFT and total latency answer different questions. TTFT is what a user waits before anything
+appears; total latency is bounded by `max_tokens` and so describes your output limit as much as
+the model. Reporting only one of them hides that — which is why p95 often barely moves between
+runtimes while p50 halves.
+
+### Under load
+
+```bash
+llm-bench-guard run ... --concurrency 4
+```
+
+Requests are issued together, so latency includes queueing — that is the measurement, not
+contamination. The contention guard steps aside above concurrency 1, because otherwise it would
+fire on exactly what you asked for. Comparisons across different concurrency levels are refused
+outright.
+
+A number from a quiet endpoint does not tell you how the service behaves when several people
+use it, and that is usually the number someone is about to put in a slide.
 
 ## What it does not do
 
@@ -102,8 +122,8 @@ load pays for page-ins and is never representative.
   comparison output says so every time.
 - **No host-side metrics.** VRAM and RAM live on the inference host, not in an HTTP response.
   Record them next to the artifact by hand.
-- **No throughput-under-load benchmark.** Concurrency is deliberately absent: this measures a
-  quiet endpoint, and treats a busy one as an error rather than a data point.
+- **No capacity planning.** Concurrency levels are measured, but the tool does not search for
+  the knee of the curve or model arrival rates — it reports what the levels you asked for did.
 - **It cannot turn reasoning off for you.** How to disable thinking is server- and
   template-specific. The guard tells you which mode you measured; you pass the right parameter.
 

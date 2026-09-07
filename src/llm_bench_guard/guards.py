@@ -159,6 +159,30 @@ def check_thread_parity(baseline: dict, candidate: dict) -> Finding | None:
     return None
 
 
+def check_load_parity(baseline: dict, candidate: dict) -> Finding | None:
+    """Refuse to compare a quiet run against a loaded one.
+
+    Latency under concurrency includes queueing. Comparing it with a single-request number
+    reads as a regression of the model when it is a difference in how the two were measured.
+    """
+    b, c = baseline.get("concurrency"), candidate.get("concurrency")
+    if b is None or c is None:
+        return Finding(
+            "load_parity",
+            "warn",
+            "at least one artifact predates concurrency reporting; assume it was measured "
+            "with a single request at a time.",
+        )
+    if b != c:
+        return Finding(
+            "load_parity",
+            "invalid",
+            f"concurrency differs ({b} vs {c}). Latency under load includes queueing, so this "
+            "compares the measurement setups, not the models.",
+        )
+    return None
+
+
 def quality_pairing_note() -> Finding:
     """Always emitted by a comparison: speed alone is not a decision."""
     return Finding(

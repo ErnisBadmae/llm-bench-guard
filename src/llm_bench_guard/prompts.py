@@ -25,7 +25,10 @@ DEFAULT_PROMPTS: list[Prompt] = [
         "max_tokens": 64,
         "messages": [
             {"role": "system", "content": "Answer in one short sentence."},
-            {"role": "user", "content": "What is a write-ahead log used for in a database?"},
+            {
+                "role": "user",
+                "content": "What is a write-ahead log used for in a database?",
+            },
         ],
     },
     {
@@ -64,5 +67,10 @@ DEFAULT_PROMPTS: list[Prompt] = [
 CONTROL: Prompt = {
     "name": "control_reasoning_probe",
     "max_tokens": 128,
-    "messages": [{"role": "user", "content": "What is the capital of France? Answer in one word."}],
+    "messages": [
+        {
+            "role": "user",
+            "content": "What is the capital of France? Answer in one word.",
+        }
+    ],
 }
